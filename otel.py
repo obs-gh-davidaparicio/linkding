@@ -160,13 +160,17 @@ def setup_instrumentation(service_name: str = "linkding", service_version: str =
     # Instrument HTTP requests made by the requests library
     RequestsInstrumentor().instrument()
     
+    # Initialize business metrics
+    business_metrics = create_business_metrics()
+
     logger.info("OpenTelemetry instrumentation initialized", extra={
         "service_name": service_name,
         "service_version": service_version,
         "otlp_endpoint": otlp_endpoint,
-        "instrumentation": ["django", "sqlite3", "requests", "logging"]
+        "instrumentation": ["django", "sqlite3", "requests", "logging"],
+        "business_metrics": list(business_metrics.keys())
     })
-    
+
     return logger, tracer, meter
 
 
@@ -199,7 +203,7 @@ def add_span_attributes(attributes: dict):
 def record_exception(exception: Exception):
     """
     Record an exception in the current span if one is active.
-    
+
     Args:
         exception: Exception to record in the current span.
     """
@@ -207,3 +211,74 @@ def record_exception(exception: Exception):
     if current_span and current_span.is_recording():
         current_span.record_exception(exception)
         current_span.set_status(trace.Status(trace.StatusCode.ERROR, str(exception)))
+
+
+# Global meter instance for business metrics
+_business_meter = None
+
+def get_business_meter():
+    """Get the global business meter instance for recording custom metrics."""
+    global _business_meter
+    if _business_meter is None:
+        _business_meter = metrics.get_meter("linkding.business")
+    return _business_meter
+
+
+def create_business_metrics():
+    """Create business-specific metrics for monitoring key operations."""
+    meter = get_business_meter()
+
+    # Counters for business operations
+    bookmark_operations = meter.create_counter(
+        name="linkding_bookmark_operations_total",
+        description="Total number of bookmark operations",
+        unit="1"
+    )
+
+    import_operations = meter.create_counter(
+        name="linkding_import_operations_total",
+        description="Total number of import operations",
+        unit="1"
+    )
+
+    export_operations = meter.create_counter(
+        name="linkding_export_operations_total",
+        description="Total number of export operations",
+        unit="1"
+    )
+
+    search_operations = meter.create_counter(
+        name="linkding_search_operations_total",
+        description="Total number of search operations",
+        unit="1"
+    )
+
+    # Histograms for operation durations
+    import_duration = meter.create_histogram(
+        name="linkding_import_duration_seconds",
+        description="Duration of import operations in seconds",
+        unit="s"
+    )
+
+    export_duration = meter.create_histogram(
+        name="linkding_export_duration_seconds",
+        description="Duration of export operations in seconds",
+        unit="s"
+    )
+
+    # Gauges for current state
+    total_bookmarks = meter.create_up_down_counter(
+        name="linkding_bookmarks_total",
+        description="Total number of bookmarks in the system",
+        unit="1"
+    )
+
+    return {
+        'bookmark_operations': bookmark_operations,
+        'import_operations': import_operations,
+        'export_operations': export_operations,
+        'search_operations': search_operations,
+        'import_duration': import_duration,
+        'export_duration': export_duration,
+        'total_bookmarks': total_bookmarks,
+    }

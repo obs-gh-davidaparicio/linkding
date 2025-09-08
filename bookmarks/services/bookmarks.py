@@ -3,6 +3,7 @@ from typing import Union
 from django.contrib.auth.models import User
 from django.utils import timezone
 from opentelemetry import trace
+from otel import get_business_meter
 
 from bookmarks.models import Bookmark, parse_tag_string
 from bookmarks.services.tags import get_or_create_tags
@@ -11,6 +12,14 @@ from bookmarks.services import tasks
 
 # Get tracer for this module
 tracer = trace.get_tracer(__name__)
+meter = get_business_meter()
+
+# Business metrics
+bookmark_operations_counter = meter.create_counter(
+    name="linkding_bookmark_operations_total",
+    description="Total number of bookmark operations",
+    unit="1"
+)
 
 
 def create_bookmark(bookmark: Bookmark, tag_string: str, current_user: User):
@@ -48,6 +57,9 @@ def create_bookmark(bookmark: Bookmark, tag_string: str, current_user: User):
         # Create snapshot on web archive
         tasks.create_web_archive_snapshot(current_user, bookmark, False)
 
+        # Record business metric
+        bookmark_operations_counter.add(1, {"operation": "create", "user_id": str(current_user.id)})
+
         return bookmark
 
 
@@ -74,6 +86,9 @@ def update_bookmark(bookmark: Bookmark, tag_string, current_user: User):
             tasks.create_web_archive_snapshot(current_user, bookmark, True)
             # Only update website metadata if URL changed
             _update_website_metadata(bookmark)
+
+        # Record business metric
+        bookmark_operations_counter.add(1, {"operation": "update", "user_id": str(current_user.id)})
 
         return bookmark
 

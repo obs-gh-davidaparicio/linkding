@@ -2,25 +2,81 @@ from typing import Optional
 
 from django.contrib.auth.models import User
 from django.db.models import Q, QuerySet
+from opentelemetry import trace
+from otel import get_business_meter
 
 from bookmarks.models import Bookmark, Tag
 from bookmarks.utils import unique
 
+tracer = trace.get_tracer(__name__)
+meter = get_business_meter()
+
+# Business metrics
+search_operations_counter = meter.create_counter(
+    name="linkding_search_operations_total",
+    description="Total number of search operations",
+    unit="1"
+)
+
 
 def query_bookmarks(user: User, query_string: str) -> QuerySet:
-    return _base_bookmarks_query(user, query_string) \
-        .filter(is_archived=False)
+    with tracer.start_as_current_span("query_bookmarks") as span:
+        span.set_attribute("user.id", user.id)
+        span.set_attribute("user.username", user.username)
+        span.set_attribute("search.query", query_string or "")
+        span.set_attribute("search.type", "active")
+
+        result = _base_bookmarks_query(user, query_string).filter(is_archived=False)
+
+        # Record business metric
+        search_operations_counter.add(1, {
+            "user_id": str(user.id),
+            "search_type": "active",
+            "has_query": str(bool(query_string))
+        })
+
+        return result
 
 
 def query_archived_bookmarks(user: User, query_string: str) -> QuerySet:
-    return _base_bookmarks_query(user, query_string) \
-        .filter(is_archived=True)
+    with tracer.start_as_current_span("query_archived_bookmarks") as span:
+        span.set_attribute("user.id", user.id)
+        span.set_attribute("user.username", user.username)
+        span.set_attribute("search.query", query_string or "")
+        span.set_attribute("search.type", "archived")
+
+        result = _base_bookmarks_query(user, query_string).filter(is_archived=True)
+
+        # Record business metric
+        search_operations_counter.add(1, {
+            "user_id": str(user.id),
+            "search_type": "archived",
+            "has_query": str(bool(query_string))
+        })
+
+        return result
 
 
 def query_shared_bookmarks(user: Optional[User], query_string: str) -> QuerySet:
-    return _base_bookmarks_query(user, query_string) \
-        .filter(shared=True) \
-        .filter(owner__profile__enable_sharing=True)
+    with tracer.start_as_current_span("query_shared_bookmarks") as span:
+        if user:
+            span.set_attribute("user.id", user.id)
+            span.set_attribute("user.username", user.username)
+        span.set_attribute("search.query", query_string or "")
+        span.set_attribute("search.type", "shared")
+
+        result = _base_bookmarks_query(user, query_string) \
+            .filter(shared=True) \
+            .filter(owner__profile__enable_sharing=True)
+
+        # Record business metric
+        search_operations_counter.add(1, {
+            "user_id": str(user.id) if user else "anonymous",
+            "search_type": "shared",
+            "has_query": str(bool(query_string))
+        })
+
+        return result
 
 
 def _base_bookmarks_query(user: Optional[User], query_string: str) -> QuerySet:
