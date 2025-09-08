@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 from django.urls import reverse
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
@@ -9,6 +11,34 @@ from bookmarks.api.serializers import BookmarkSerializer, TagSerializer
 from bookmarks.models import Bookmark, BookmarkFilters, Tag, User
 from bookmarks.services.bookmarks import archive_bookmark, unarchive_bookmark
 from bookmarks.services.website_loader import load_website_metadata
+
+# OpenTelemetry imports
+try:
+    import otel
+    from opentelemetry import trace
+    from opentelemetry import metrics
+    tracer = otel.get_tracer()
+    meter = otel.get_meter()
+    logger = otel.get_logger()
+
+    # Create metrics
+    api_requests_counter = meter.create_counter(
+        "api_requests_total",
+        description="Total number of API requests",
+        unit="1"
+    ) if meter else None
+    api_request_duration = meter.create_histogram(
+        "api_request_duration_seconds",
+        description="Duration of API requests",
+        unit="s"
+    ) if meter else None
+except ImportError:
+    # OpenTelemetry not available, use no-op implementations
+    tracer = None
+    meter = None
+    logger = None
+    api_requests_counter = None
+    api_request_duration = None
 
 
 class BookmarkViewSet(viewsets.GenericViewSet,
@@ -66,22 +96,66 @@ class BookmarkViewSet(viewsets.GenericViewSet,
 
     @action(methods=['get'], detail=False)
     def check(self, request):
-        url = request.GET.get('url')
-        bookmark = Bookmark.objects.filter(owner=request.user, url=url).first()
-        existing_bookmark_data = None
+        with tracer.start_as_current_span("api.bookmark.check") if tracer else nullcontext():
+            if tracer:
+                span = trace.get_current_span()
+                url = request.GET.get('url')
+                span.set_attributes({
+                    "api.endpoint": "bookmark.check",
+                    "api.method": "GET",
+                    "user.id": request.user.id,
+                    "user.username": request.user.username,
+                    "bookmark.url": url or ""
+                })
 
-        if bookmark is not None:
-            existing_bookmark_data = {
-                'id': bookmark.id,
-                'edit_url': reverse('bookmarks:edit', args=[bookmark.id])
-            }
+            if api_requests_counter:
+                api_requests_counter.add(1, {"endpoint": "bookmark.check", "method": "GET"})
 
-        metadata = load_website_metadata(url)
+            try:
+                url = request.GET.get('url')
+                bookmark = Bookmark.objects.filter(owner=request.user, url=url).first()
+                existing_bookmark_data = None
 
-        return Response({
-            'bookmark': existing_bookmark_data,
-            'metadata': metadata.to_dict()
-        }, status=status.HTTP_200_OK)
+                if bookmark is not None:
+                    existing_bookmark_data = {
+                        'id': bookmark.id,
+                        'edit_url': reverse('bookmarks:edit', args=[bookmark.id])
+                    }
+                    if tracer:
+                        span.set_attribute("bookmark.exists", True)
+                        span.set_attribute("bookmark.id", bookmark.id)
+                else:
+                    if tracer:
+                        span.set_attribute("bookmark.exists", False)
+
+                metadata = load_website_metadata(url)
+
+                if tracer:
+                    span.set_status(trace.Status(trace.StatusCode.OK))
+
+                if logger:
+                    logger.info("Bookmark check completed", extra={
+                        "user_id": request.user.id,
+                        "url": url,
+                        "bookmark_exists": bookmark is not None
+                    })
+
+                return Response({
+                    'bookmark': existing_bookmark_data,
+                    'metadata': metadata.to_dict()
+                }, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                if tracer:
+                    span.record_exception(e)
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                if logger:
+                    logger.error("Bookmark check failed", extra={
+                        "user_id": request.user.id,
+                        "url": url,
+                        "error": str(e)
+                    })
+                raise
 
 
 class TagViewSet(viewsets.GenericViewSet,

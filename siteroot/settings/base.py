@@ -16,6 +16,16 @@ import os
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Initialize OpenTelemetry early in the application startup
+# Only initialize if OpenTelemetry endpoint is configured
+if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
+    try:
+        import otel
+        otel.initialize_otel()
+    except ImportError:
+        # OpenTelemetry not available, continue without instrumentation
+        pass
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/2.2/howto/deployment/checklist/
 

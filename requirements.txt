@@ -28,3 +28,12 @@ sqlparse==0.4.2
 typing-extensions==3.10.0.0
 urllib3==1.26.11
 waybackpy==3.0.6
+# OpenTelemetry dependencies
+opentelemetry-api>=1.30.0,<1.33.0
+opentelemetry-sdk>=1.30.0,<1.33.0
+opentelemetry-exporter-otlp-proto-http>=1.30.0,<1.33.0
+opentelemetry-exporter-otlp-proto-grpc>=1.30.0,<1.33.0
+opentelemetry-instrumentation-django>=0.51b0,<=0.53b0
+opentelemetry-instrumentation-logging>=0.51b0,<=0.53b0
+opentelemetry-instrumentation-requests>=0.51b0,<=0.53b0
+opentelemetry-instrumentation-sqlite3>=0.51b0,<=0.53b0
