@@ -2,54 +2,80 @@ from typing import Union
 
 from django.contrib.auth.models import User
 from django.utils import timezone
+from opentelemetry import trace
 
 from bookmarks.models import Bookmark, parse_tag_string
 from bookmarks.services.tags import get_or_create_tags
 from bookmarks.services import website_loader
 from bookmarks.services import tasks
 
+# Get tracer for this module
+tracer = trace.get_tracer(__name__)
+
 
 def create_bookmark(bookmark: Bookmark, tag_string: str, current_user: User):
-    # If URL is already bookmarked, then update it
-    existing_bookmark: Bookmark = Bookmark.objects.filter(owner=current_user, url=bookmark.url).first()
+    with tracer.start_as_current_span("create_bookmark") as span:
+        span.set_attribute("bookmark.url", bookmark.url)
+        span.set_attribute("bookmark.title", bookmark.title or "")
+        span.set_attribute("user.id", current_user.id)
+        span.set_attribute("user.username", current_user.username)
 
-    if existing_bookmark is not None:
-        _merge_bookmark_data(bookmark, existing_bookmark)
-        return update_bookmark(existing_bookmark, tag_string, current_user)
+        # If URL is already bookmarked, then update it
+        existing_bookmark: Bookmark = Bookmark.objects.filter(owner=current_user, url=bookmark.url).first()
 
-    # Update website info
-    _update_website_metadata(bookmark)
-    # Set currently logged in user as owner
-    bookmark.owner = current_user
-    # Set dates
-    bookmark.date_added = timezone.now()
-    bookmark.date_modified = timezone.now()
-    bookmark.save()
-    # Update tag list
-    _update_bookmark_tags(bookmark, tag_string, current_user)
-    bookmark.save()
-    # Create snapshot on web archive
-    tasks.create_web_archive_snapshot(current_user, bookmark, False)
+        if existing_bookmark is not None:
+            span.set_attribute("bookmark.action", "update_existing")
+            span.set_attribute("bookmark.existing_id", existing_bookmark.id)
+            _merge_bookmark_data(bookmark, existing_bookmark)
+            return update_bookmark(existing_bookmark, tag_string, current_user)
 
-    return bookmark
+        span.set_attribute("bookmark.action", "create_new")
+
+        # Update website info
+        _update_website_metadata(bookmark)
+        # Set currently logged in user as owner
+        bookmark.owner = current_user
+        # Set dates
+        bookmark.date_added = timezone.now()
+        bookmark.date_modified = timezone.now()
+        bookmark.save()
+
+        span.set_attribute("bookmark.id", bookmark.id)
+
+        # Update tag list
+        _update_bookmark_tags(bookmark, tag_string, current_user)
+        bookmark.save()
+        # Create snapshot on web archive
+        tasks.create_web_archive_snapshot(current_user, bookmark, False)
+
+        return bookmark
 
 
 def update_bookmark(bookmark: Bookmark, tag_string, current_user: User):
-    # Detect URL change
-    original_bookmark = Bookmark.objects.get(id=bookmark.id)
-    has_url_changed = original_bookmark.url != bookmark.url
-    # Update tag list
-    _update_bookmark_tags(bookmark, tag_string, current_user)
-    # Update dates
-    bookmark.date_modified = timezone.now()
-    bookmark.save()
-    if has_url_changed:
-        # Update web archive snapshot, if URL changed
-        tasks.create_web_archive_snapshot(current_user, bookmark, True)
-        # Only update website metadata if URL changed
-        _update_website_metadata(bookmark)
+    with tracer.start_as_current_span("update_bookmark") as span:
+        span.set_attribute("bookmark.id", bookmark.id)
+        span.set_attribute("bookmark.url", bookmark.url)
+        span.set_attribute("bookmark.title", bookmark.title or "")
+        span.set_attribute("user.id", current_user.id)
+        span.set_attribute("user.username", current_user.username)
 
-    return bookmark
+        # Detect URL change
+        original_bookmark = Bookmark.objects.get(id=bookmark.id)
+        has_url_changed = original_bookmark.url != bookmark.url
+        span.set_attribute("bookmark.url_changed", has_url_changed)
+
+        # Update tag list
+        _update_bookmark_tags(bookmark, tag_string, current_user)
+        # Update dates
+        bookmark.date_modified = timezone.now()
+        bookmark.save()
+        if has_url_changed:
+            # Update web archive snapshot, if URL changed
+            tasks.create_web_archive_snapshot(current_user, bookmark, True)
+            # Only update website metadata if URL changed
+            _update_website_metadata(bookmark)
+
+        return bookmark
 
 
 def archive_bookmark(bookmark: Bookmark):

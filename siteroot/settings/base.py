@@ -12,6 +12,20 @@ https://docs.djangoproject.com/en/2.2/ref/settings/
 
 import os
 
+# Initialize OpenTelemetry instrumentation early in Django startup
+# This must be done before Django apps are loaded to ensure proper instrumentation
+try:
+    from otel import setup_instrumentation
+    # Initialize OpenTelemetry with service name and version
+    otel_logger, otel_tracer, otel_meter = setup_instrumentation(
+        service_name="linkding",
+        service_version="1.0.0"
+    )
+except ImportError as e:
+    # If OpenTelemetry is not available, continue without instrumentation
+    print(f"OpenTelemetry instrumentation not available: {e}")
+    otel_logger = otel_tracer = otel_meter = None
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
