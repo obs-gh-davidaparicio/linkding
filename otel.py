@@ -64,7 +64,8 @@ def setup_metrics(resource: Resource, otlp_endpoint: str, bearer_token: str = No
         headers["Authorization"] = f"Bearer {bearer_token}"
     
     metric_reader = PeriodicExportingMetricReader(
-        OTLPMetricExporter(endpoint=otlp_endpoint, headers=headers)
+        OTLPMetricExporter(endpoint=otlp_endpoint, headers=headers),
+        export_interval_millis=5000  # Export metrics every 5 seconds
     )
     metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[metric_reader]))
     return metrics.get_meter(__name__)
