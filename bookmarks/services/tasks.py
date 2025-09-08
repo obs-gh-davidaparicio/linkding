@@ -5,6 +5,7 @@ from background_task import background
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User
+from opentelemetry import trace
 from waybackpy.exceptions import WaybackError, TooManyRequestsError, NoCDXRecordFound
 
 import bookmarks.services.wayback
@@ -12,6 +13,7 @@ from bookmarks.models import Bookmark, UserProfile
 from bookmarks.services.website_loader import DEFAULT_USER_AGENT
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 def is_web_archive_integration_active(user: User) -> bool:
@@ -55,27 +57,39 @@ def _create_snapshot(bookmark: Bookmark):
 
 @background()
 def _create_web_archive_snapshot_task(bookmark_id: int, force_update: bool):
-    try:
-        bookmark = Bookmark.objects.get(id=bookmark_id)
-    except Bookmark.DoesNotExist:
-        return
+    with tracer.start_as_current_span("create_web_archive_snapshot_task") as span:
+        span.set_attribute("bookmark.id", bookmark_id)
+        span.set_attribute("task.force_update", force_update)
 
-    # Skip if snapshot exists and update is not explicitly requested
-    if bookmark.web_archive_snapshot_url and not force_update:
-        return
+        try:
+            bookmark = Bookmark.objects.get(id=bookmark_id)
+            span.set_attribute("bookmark.url", bookmark.url)
+        except Bookmark.DoesNotExist:
+            span.set_attribute("task.result", "bookmark_not_found")
+            return
 
-    # Create new snapshot
-    try:
-        _create_snapshot(bookmark)
-        return
-    except TooManyRequestsError:
-        logger.error(
-            f'Failed to create snapshot due to rate limiting, trying to load newest snapshot as fallback. url={bookmark.url}')
-    except WaybackError as error:
-        logger.error(f'Failed to create snapshot, trying to load newest snapshot as fallback. url={bookmark.url}', exc_info=error)
+        # Skip if snapshot exists and update is not explicitly requested
+        if bookmark.web_archive_snapshot_url and not force_update:
+            span.set_attribute("task.result", "skipped_existing_snapshot")
+            return
 
-    # Load the newest snapshot as fallback
-    _load_newest_snapshot(bookmark)
+        # Create new snapshot
+        try:
+            _create_snapshot(bookmark)
+            span.set_attribute("task.result", "snapshot_created")
+            return
+        except TooManyRequestsError:
+            span.set_attribute("task.result", "rate_limited")
+            logger.error(
+                f'Failed to create snapshot due to rate limiting, trying to load newest snapshot as fallback. url={bookmark.url}')
+        except WaybackError as error:
+            span.record_exception(error)
+            span.set_attribute("task.result", "wayback_error")
+            logger.error(f'Failed to create snapshot, trying to load newest snapshot as fallback. url={bookmark.url}', exc_info=error)
+
+        # Load the newest snapshot as fallback
+        _load_newest_snapshot(bookmark)
+        span.set_attribute("task.result", "fallback_snapshot_loaded")
 
 
 @background()
