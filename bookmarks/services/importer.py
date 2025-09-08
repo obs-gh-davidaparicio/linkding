@@ -4,6 +4,8 @@ from typing import List
 
 from django.contrib.auth.models import User
 from django.utils import timezone
+from opentelemetry import trace
+from otel import get_business_meter
 
 from bookmarks.models import Bookmark, Tag, parse_tag_string
 from bookmarks.services import tasks
@@ -11,6 +13,21 @@ from bookmarks.services.parser import parse, NetscapeBookmark
 from bookmarks.utils import parse_timestamp
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+meter = get_business_meter()
+
+# Business metrics
+import_operations_counter = meter.create_counter(
+    name="linkding_import_operations_total",
+    description="Total number of import operations",
+    unit="1"
+)
+
+import_duration_histogram = meter.create_histogram(
+    name="linkding_import_duration_seconds",
+    description="Duration of import operations in seconds",
+    unit="s"
+)
 
 
 @dataclass
@@ -51,34 +68,65 @@ class TagCache:
 
 
 def import_netscape_html(html: str, user: User):
-    result = ImportResult()
-    import_start = timezone.now()
+    with tracer.start_as_current_span("import_netscape_html") as span:
+        span.set_attribute("user.id", user.id)
+        span.set_attribute("user.username", user.username)
+        span.set_attribute("import.html_size", len(html))
 
-    try:
-        netscape_bookmarks = parse(html)
-    except:
-        logging.exception('Could not read bookmarks file.')
-        raise
+        result = ImportResult()
+        import_start = timezone.now()
 
-    parse_end = timezone.now()
-    logger.debug(f'Parse duration: {parse_end - import_start}')
+        try:
+            netscape_bookmarks = parse(html)
+            span.set_attribute("import.parsed_bookmarks", len(netscape_bookmarks))
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, "Failed to parse HTML"))
+            logging.exception('Could not read bookmarks file.')
+            raise
 
-    # Create and cache all tags beforehand
-    _create_missing_tags(netscape_bookmarks, user)
-    tag_cache = TagCache(user)
+        parse_end = timezone.now()
+        parse_duration = (parse_end - import_start).total_seconds()
+        span.set_attribute("import.parse_duration_seconds", parse_duration)
+        logger.debug(f'Parse duration: {parse_end - import_start}')
 
-    # Split bookmarks to import into batches, to keep memory usage for bulk operations manageable
-    batches = _get_batches(netscape_bookmarks, 200)
-    for batch in batches:
-        _import_batch(batch, user, tag_cache, result)
+        # Create and cache all tags beforehand
+        _create_missing_tags(netscape_bookmarks, user)
+        tag_cache = TagCache(user)
 
-    # Create snapshots for newly imported bookmarks
-    tasks.schedule_bookmarks_without_snapshots(user)
+        # Split bookmarks to import into batches, to keep memory usage for bulk operations manageable
+        batches = _get_batches(netscape_bookmarks, 200)
+        span.set_attribute("import.batch_count", len(batches))
 
-    end = timezone.now()
-    logger.debug(f'Import duration: {end - import_start}')
+        for batch_index, batch in enumerate(batches):
+            with tracer.start_as_current_span("import_batch") as batch_span:
+                batch_span.set_attribute("import.batch_index", batch_index)
+                batch_span.set_attribute("import.batch_size", len(batch))
+                _import_batch(batch, user, tag_cache, result)
 
-    return result
+        # Create snapshots for newly imported bookmarks
+        tasks.schedule_bookmarks_without_snapshots(user)
+
+        end = timezone.now()
+        total_duration = (end - import_start).total_seconds()
+        span.set_attribute("import.total_duration_seconds", total_duration)
+        span.set_attribute("import.result.total", result.total)
+        span.set_attribute("import.result.success", result.success)
+        span.set_attribute("import.result.failed", result.failed)
+        logger.debug(f'Import duration: {end - import_start}')
+
+        # Record business metrics
+        import_operations_counter.add(1, {
+            "user_id": str(user.id),
+            "success": str(result.success),
+            "failed": str(result.failed)
+        })
+        import_duration_histogram.record(total_duration, {
+            "user_id": str(user.id),
+            "bookmark_count": str(result.total)
+        })
+
+        return result
 
 
 def _create_missing_tags(netscape_bookmarks: List[NetscapeBookmark], user: User):
