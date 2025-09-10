@@ -4,6 +4,7 @@ from django.views.generic import RedirectView
 
 from bookmarks.api.routes import router
 from bookmarks import views
+from bookmarks.views import health
 from bookmarks.feeds import AllBookmarksFeed, UnreadBookmarksFeed
 
 app_name = 'bookmarks'
@@ -28,6 +29,11 @@ urlpatterns = [
     path('toasts/acknowledge', views.toasts.acknowledge, name='toasts.acknowledge'),
     # API
     path('api/', include(router.urls), name='api'),
+    # Health endpoints for monitoring and orchestration
+    path('health', health.health, name='health'),
+    path('health/ready', health.health_ready, name='health.ready'),
+    path('health/live', health.health_live, name='health.live'), 
+    path('health/metrics', health.health_metrics, name='health.metrics'),
     # Feeds
     path('feeds/<str:feed_key>/all', AllBookmarksFeed(), name='feeds.all'),
     path('feeds/<str:feed_key>/unread', UnreadBookmarksFeed(), name='feeds.unread'),

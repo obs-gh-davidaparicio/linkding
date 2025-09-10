@@ -44,7 +44,6 @@ The name comes from:
 - Admin panel for user self-service and raw data access
 - Easy setup using Docker, uses SQLite as database
 
-
 **Demo:** https://demo.linkding.link/ (configured with open registration)
 
 **Screenshot:**
