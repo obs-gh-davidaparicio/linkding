@@ -3,7 +3,7 @@ OpenTelemetry instrumentation setup for Django linkding application.
 
 This module provides comprehensive OpenTelemetry instrumentation including:
 - Distributed tracing with OTLP span export
-- Metrics collection with OTLP metric export  
+- Metrics collection with OTLP metric export
 - Structured logging with OTLP log export
 - Django-specific instrumentation
 - SQLite3 and requests instrumentation
@@ -34,11 +34,11 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 def get_resource(service_name: str, service_version: str = "1.0.0") -> Resource:
     """
     Create OpenTelemetry resource with service attributes.
-    
+
     Args:
         service_name: Logical service name for resource attributes.
         service_version: Service version for resource attributes.
-        
+
     Returns:
         OpenTelemetry Resource instance with service attributes.
     """
@@ -61,12 +61,12 @@ def setup_tracing(resource: Resource, otlp_endpoint: str, bearer_token: str = No
         An OpenTelemetry Tracer instance.
     """
     trace_provider = TracerProvider(resource=resource)
-    
+
     # Configure OTLP exporter with optional authentication
     exporter_kwargs = {"endpoint": otlp_endpoint}
     if bearer_token:
         exporter_kwargs["headers"] = {"authorization": f"Bearer {bearer_token}"}
-    
+
     otlp_exporter = OTLPSpanExporter(**exporter_kwargs)
     otlp_processor = BatchSpanProcessor(otlp_exporter)
     trace_provider.add_span_processor(otlp_processor)
@@ -90,7 +90,7 @@ def setup_metrics(resource: Resource, otlp_endpoint: str, bearer_token: str = No
     exporter_kwargs = {"endpoint": otlp_endpoint}
     if bearer_token:
         exporter_kwargs["headers"] = {"authorization": f"Bearer {bearer_token}"}
-    
+
     metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(**exporter_kwargs))
     metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[metric_reader]))
     return metrics.get_meter(__name__)
@@ -110,12 +110,12 @@ def setup_logging(resource: Resource, otlp_endpoint: str, bearer_token: str = No
     """
     logger_provider = LoggerProvider(resource=resource)
     set_logger_provider(logger_provider)
-    
+
     # Configure OTLP exporter with optional authentication
     exporter_kwargs = {"endpoint": otlp_endpoint}
     if bearer_token:
         exporter_kwargs["headers"] = {"authorization": f"Bearer {bearer_token}"}
-    
+
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter(**exporter_kwargs)))
 
     # Add OpenTelemetry logging handler to root logger
@@ -128,7 +128,8 @@ def setup_logging(resource: Resource, otlp_endpoint: str, bearer_token: str = No
     return logging.getLogger(__name__)
 
 
-def setup_instrumentation(service_name: str = "linkding", service_version: str = "1.0.0") -> Tuple[logging.Logger, trace.Tracer, metrics.Meter]:
+def setup_instrumentation(service_name: str = "linkding",
+                          service_version: str = "1.0.0") -> Tuple[logging.Logger, trace.Tracer, metrics.Meter]:
     """
     Set up comprehensive OpenTelemetry instrumentation for Django linkding application.
 
@@ -142,24 +143,24 @@ def setup_instrumentation(service_name: str = "linkding", service_version: str =
     # Get configuration from environment variables
     otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
     bearer_token = os.environ.get("OTEL_EXPORTER_OTLP_BEARER_TOKEN")
-    
+
     # Create resource with service information
     resource = get_resource(service_name, service_version)
-    
+
     # Set up tracing, metrics, and logging
     tracer = setup_tracing(resource, otlp_endpoint, bearer_token)
     meter = setup_metrics(resource, otlp_endpoint, bearer_token)
     logger = setup_logging(resource, otlp_endpoint, bearer_token)
-    
+
     # Instrument Django framework
     DjangoInstrumentor().instrument()
-    
+
     # Instrument SQLite3 database operations
     SQLite3Instrumentor().instrument()
-    
+
     # Instrument HTTP requests made by the requests library
     RequestsInstrumentor().instrument()
-    
+
     # Initialize business metrics
     business_metrics = create_business_metrics()
 
@@ -177,7 +178,7 @@ def setup_instrumentation(service_name: str = "linkding", service_version: str =
 def get_current_span_context():
     """
     Get the current span context for manual instrumentation.
-    
+
     Returns:
         Current span context or None if no active span.
     """
@@ -190,7 +191,7 @@ def get_current_span_context():
 def add_span_attributes(attributes: dict):
     """
     Add attributes to the current span if one is active.
-    
+
     Args:
         attributes: Dictionary of attributes to add to the current span.
     """
@@ -215,6 +216,7 @@ def record_exception(exception: Exception):
 
 # Global meter instance for business metrics
 _business_meter = None
+
 
 def get_business_meter():
     """Get the global business meter instance for recording custom metrics."""
